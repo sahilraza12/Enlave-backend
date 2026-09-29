@@ -36,19 +36,6 @@ io.use((socket, next) => {
 app.use(cors());
 app.use(express.json());
 
-// Public Key retrieval for Admin Escrow
-app.get('/api/auth/admin-public-key', require('./middleware/auth').verifyToken, async (req, res) => {
-  try {
-    const adminUser = await User.findOne({ role: 'admin', publicKey: { $exists: true,$ne: '' } }).select('publicKey');
-    if (!adminUser || !adminUser.publicKey) {
-      return res.status(404).json({ error: 'No active admin escrow key found' });
-    }
-    res.json({ publicKey: adminUser.publicKey });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Register API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);

@@ -123,11 +123,14 @@ router.get('/my-keys', verifyToken, async (req, res) => {
 // Fetch Active Admin's Public Key (For Envelope Encryption / Escrow)
 router.get('/admin-public-key', verifyToken, async (req, res) => {
   try {
-    const admin = await User.findOne({ role: 'admin' }).select('publicKey name email');
-    if (!admin || !admin.publicKey) {
+    const admins = await User.find({
+      role: 'admin',
+      publicKey: { $exists: true, $nin: [null, ''] }
+    }).select('_id publicKey');
+    if (admins.length === 0) {
       return res.status(404).json({ message: 'Active admin public key not available' });
     }
-    res.json(admin);
+    res.json({ admins });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -6,13 +6,15 @@ const ALGORITHM = 'aes-256-gcm';
 // -------------------------------------------------------------
 // 1. Secret Key Loader with Safe Fallback Check
 // -------------------------------------------------------------
+// Yeh fallback key exactly frontend se match karni chahiye
+const FALLBACK_STATIC_HEX = 'e2b7a9f4c3d1e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3';
+
 function getSecretKey() {
-  const rawKey = process.env.CRYPTO_SECRET_KEY || process.env.ENCRYPTION_KEY;
-  if (!rawKey || rawKey.length !== 64) {
-    console.warn('[CryptoHelper] WARNING: Valid 64-char hex CRYPTO_SECRET_KEY not set in .env. Server-side static crypto will be restricted.');
-    return null;
+  let rawKey = process.env.CRYPTO_SECRET_KEY || process.env.ENCRYPTION_KEY;
+  if (!rawKey || rawKey.trim().length !== 64) {
+    rawKey = FALLBACK_STATIC_HEX;
   }
-  return Buffer.from(rawKey, 'hex');
+  return Buffer.from(rawKey.trim(), 'hex');
 }
 
 // -------------------------------------------------------------
@@ -22,10 +24,7 @@ function encrypt(text) {
   if (text === null || text === undefined) return null;
 
   const secretKey = getSecretKey();
-  if (!secretKey) {
-    throw new Error('Static encryption key unavailable on server.');
-  }
-
+  
   // Standard 12-byte IV for AES-GCM
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGORITHM, secretKey, iv);
@@ -46,10 +45,9 @@ function encrypt(text) {
 // -------------------------------------------------------------
 function decrypt(encryptedText, ivHex, authTagHex) {
   try {
-    if (!encryptedText || !ivHex || !authTagHex) return encryptedText || '';
+    if (!encryptedText || !ivHex || !authTagHex) return '';
 
     const secretKey = getSecretKey();
-    if (!secretKey) return '[Server Key Missing]';
 
     const decipher = crypto.createDecipheriv(
       ALGORITHM,
@@ -62,7 +60,9 @@ function decrypt(encryptedText, ivHex, authTagHex) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (err) {
-    return '[Decryption Failed: Cipher Tampered]';
+    // Error throw ya string return karne ke bajaye empty return karein
+    // Taaki frontend ka AdminDashboard apna Master Audit Decryptor chala sake
+    return ''; 
   }
 }
 
@@ -75,10 +75,6 @@ function encryptBuffer(buffer) {
   }
 
   const secretKey = getSecretKey();
-  if (!secretKey) {
-    throw new Error('Static encryption key unavailable on server.');
-  }
-
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGORITHM, secretKey, iv);
 
@@ -102,10 +98,6 @@ function decryptBuffer(encryptedBuffer, ivHex, authTagHex) {
     }
 
     const secretKey = getSecretKey();
-    if (!secretKey) {
-      throw new Error('Static encryption key unavailable on server.');
-    }
-
     const decipher = crypto.createDecipheriv(
       ALGORITHM,
       secretKey,
