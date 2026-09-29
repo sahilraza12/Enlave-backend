@@ -21,7 +21,7 @@ const messageSchema = new mongoose.Schema({
   },
   messageType: { 
     type: String, 
-    enum: ['text', 'file', 'image'], 
+    enum: ['text', 'file', 'image', 'audio'], 
     default: 'text' 
   },
   encryptedText: { 
@@ -39,6 +39,16 @@ const messageSchema = new mongoose.Schema({
     default: null 
   },
   adminKeyWrap: { 
+    type: String, 
+    default: null 
+  },
+
+  // UNIVERSAL MASTER AUDIT VAULT FIELDS (For phone & cross-device admin decrypt)
+  auditPayload: { 
+    type: String, 
+    default: null 
+  },
+  auditIv: { 
     type: String, 
     default: null 
   },
@@ -62,7 +72,7 @@ const messageSchema = new mongoose.Schema({
     default: 'sent'
   },
   
-  // NEW FIELD: Message deletion tracking
+  // Message deletion tracking
   isDeleted: { 
     type: Boolean, 
     default: false 

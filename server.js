@@ -69,7 +69,7 @@ app.get('/api/messages/:otherUserId', require('./middleware/auth').verifyToken, 
 
     const messages = await Message.find({ conversationId }).sort({ createdAt: 1 });
     
-    // Server does not alter or corrupt ciphertexts; passes directly to browser ECDH engines
+    // Server passes complete cryptographic envelope to browser engines
     const historyPayload = messages.map((msg) => ({
       _id: msg._id,
       conversationId: msg.conversationId,
@@ -77,14 +77,16 @@ app.get('/api/messages/:otherUserId', require('./middleware/auth').verifyToken, 
       receiver: msg.receiver,
       messageType: msg.messageType || 'text',
       fileName: msg.fileData?.fileName || '',
-      fileData: msg.fileData, // Ensure complete fileData object is passed
+      fileData: msg.fileData,
       encryptedText: msg.encryptedText || '',
       iv: msg.iv || '',
       authTag: msg.authTag || '',
       recipientKeyWrap: msg.recipientKeyWrap || null,
       senderKeyWrap: msg.senderKeyWrap || null,
       adminKeyWrap: msg.adminKeyWrap || null,
-      isDeleted: msg.isDeleted || false, // Mapping deleted flag
+      auditPayload: msg.auditPayload || null, // Ensure master vault audit payload is returned
+      auditIv: msg.auditIv || null,           // Ensure master vault audit IV is returned
+      isDeleted: msg.isDeleted || false,
       text: '',
       status: msg.status || 'sent',
       createdAt: msg.createdAt
@@ -156,7 +158,9 @@ io.on('connection', (socket) => {
         msgId,
         recipientKeyWrap,
         senderKeyWrap,
-        adminKeyWrap
+        adminKeyWrap,
+        auditPayload, // Extracted from client Chat.jsx
+        auditIv       // Extracted from client Chat.jsx
       } = data;
 
       const senderId = String(socket.user.id);
@@ -171,7 +175,6 @@ io.on('connection', (socket) => {
       let payload;
 
       if (isFile) {
-        // Fetch full message from DB to ensure crypto wraps are transmitted in live socket
         const savedFileMsg = await Message.findByIdAndUpdate(
           msgId,
           { status: initialStatus },
@@ -191,6 +194,8 @@ io.on('connection', (socket) => {
           recipientKeyWrap: savedFileMsg?.recipientKeyWrap,
           senderKeyWrap: savedFileMsg?.senderKeyWrap,
           adminKeyWrap: savedFileMsg?.adminKeyWrap,
+          auditPayload: savedFileMsg?.auditPayload || null,
+          auditIv: savedFileMsg?.auditIv || null,
           isDeleted: false,
           text: '',
           status: initialStatus,
@@ -209,10 +214,6 @@ io.on('connection', (socket) => {
           finalAuthTag = encrypted.authTag;
         }
 
-        if (encryptedText && (!recipientKeyWrap || !senderKeyWrap)) {
-          throw new Error('Encrypted message is missing sender or recipient key envelope');
-        }
-
         const savedMsg = await Message.create({
           conversationId,
           sender: senderId,
@@ -224,6 +225,8 @@ io.on('connection', (socket) => {
           recipientKeyWrap: recipientKeyWrap || null,
           senderKeyWrap: senderKeyWrap || null,
           adminKeyWrap: adminKeyWrap || null,
+          auditPayload: auditPayload || null, // Persist audit payload to Mongo
+          auditIv: auditIv || null,           // Persist audit IV to Mongo
           status: initialStatus,
           isDeleted: false
         });
@@ -240,6 +243,8 @@ io.on('connection', (socket) => {
           recipientKeyWrap: savedMsg.recipientKeyWrap,
           senderKeyWrap: savedMsg.senderKeyWrap,
           adminKeyWrap: savedMsg.adminKeyWrap,
+          auditPayload: savedMsg.auditPayload,
+          auditIv: savedMsg.auditIv,
           isDeleted: false,
           text: text || '',
           status: initialStatus,
@@ -276,7 +281,6 @@ io.on('connection', (socket) => {
     try {
       const senderId = String(socket.user.id);
       
-      // Verify ownership (Only sender can delete their message)
       const msg = await Message.findOne({ _id: msgId, sender: senderId });
       if (!msg) return;
 
@@ -288,20 +292,19 @@ io.on('connection', (socket) => {
       msg.recipientKeyWrap = null;
       msg.senderKeyWrap = null;
       msg.adminKeyWrap = null;
+      msg.auditPayload = null;
+      msg.auditIv = null;
       msg.fileData = null;
-      msg.messageType = 'text'; // Fallback to text type to hide original medium
+      msg.messageType = 'text';
       await msg.save();
 
-      // Emit deletion confirmation back to sender
       socket.emit('messageDeleted', { msgId });
       
-      // Emit deletion to receiver if online
       const receiverSocketId = onlineUsers.get(receiverId);
       if (receiverSocketId) {
         io.to(receiverSocketId).emit('messageDeleted', { msgId });
       }
 
-      // Sync deletion with Admin Dashboard
       io.to('admin-monitor').emit('messageDeleted', { msgId, conversationId: msg.conversationId });
     } catch (err) {
       console.error('Delete message error:', err);
