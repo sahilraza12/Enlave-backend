@@ -81,6 +81,45 @@ router.put('/public-key', verifyToken, async (req, res) => {
   }
 });
 
+// -------------------------------------------------------------
+// MULTI-DEVICE KEY SYNC ENDPOINTS (Phone & Cross-Device Support)
+// -------------------------------------------------------------
+
+// 1. Save Keys Backup to Cloud (Called by Laptop after key creation)
+router.post('/sync-keys', verifyToken, async (req, res) => {
+  try {
+    const { publicKey, privateKey } = req.body;
+    if (!privateKey) {
+      return res.status(400).json({ message: 'privateKey is required for sync' });
+    }
+
+    await User.findByIdAndUpdate(req.user.id, {
+      publicKey,
+      privateKey
+    });
+
+    res.json({ success: true, message: 'Keys securely synced to user vault' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Restore Keys on New Device (Called by Phone to fetch original keys)
+router.get('/my-keys', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('publicKey privateKey');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({
+      publicKey: user.publicKey || null,
+      privateKey: user.privateKey || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Fetch Active Admin's Public Key (For Envelope Encryption / Escrow)
 router.get('/admin-public-key', verifyToken, async (req, res) => {
   try {
@@ -98,12 +137,11 @@ router.get('/admin-public-key', verifyToken, async (req, res) => {
 router.get('/users', verifyToken, async (req, res) => {
   try {
     const users = await User.find({ _id: { $ne: req.user.id } })
-      .select('-password'); // publicKey is included, password excluded
+      .select('-password -privateKey'); // Private key kisa doosre ko kabhi leak na ho
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Make sure router export is at the very bottom
 module.exports = router;
