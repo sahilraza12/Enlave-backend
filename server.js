@@ -22,11 +22,14 @@ const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('Authentication required'));
     socket.user = jwt.verify(token, process.env.JWT_SECRET);
+    if (!await User.exists({ _id: socket.user.id })) {
+      return next(new Error('Account no longer exists'));
+    }
     next();
   } catch (err) {
     next(new Error('Invalid socket token'));
@@ -40,6 +43,51 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/files', fileRoutes);
+
+app.delete('/api/auth/account', require('./middleware/auth').verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user.id);
+    const user = await User.findById(userId).select('name email createdBy publicKey');
+    if (!user) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    if (user.publicKey) {
+      await Message.updateMany(
+        { sender: userId, senderPublicKey: { $in: [null, ''] } },
+        { $set: { senderPublicKey: user.publicKey } }
+      );
+    }
+
+    await User.findByIdAndDelete(userId);
+    await UserActivity.deleteMany({ userId });
+
+    for (const socket of io.sockets.sockets.values()) {
+      if (String(socket.user?.id) === userId) {
+        socket.disconnect(true);
+      }
+    }
+    onlineUsers.delete(userId);
+    io.emit('getOnlineUsers', Array.from(onlineUsers.keys()));
+
+    const notification = {
+      deletedUserId: userId,
+      deletedUserName: user.name,
+      deletedUserEmail: user.email,
+      deletedAt: new Date()
+    };
+    const adminRoom = user.createdBy ? `admin:${user.createdBy}` : 'admin-monitor';
+    io.to(adminRoom).emit('accountDeleted', notification);
+    if (adminRoom !== 'admin-monitor') {
+      io.to('admin-monitor').emit('accountDeleted', notification);
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Account deletion error:', err);
+    return res.status(500).json({ error: 'Could not delete this account' });
+  }
+});
 
 // Safe user message retrieval with automatic status update to 'seen'
 app.get('/api/messages/:otherUserId', require('./middleware/auth').verifyToken, async (req, res) => {
@@ -66,6 +114,7 @@ app.get('/api/messages/:otherUserId', require('./middleware/auth').verifyToken, 
       sender: msg.sender,
       receiver: msg.receiver,
       messageType: msg.messageType || 'text',
+      senderPublicKey: msg.senderPublicKey || null,
       fileName: msg.fileData?.fileName || '',
       fileData: msg.fileData,
       encryptedText: msg.encryptedText || '',
@@ -204,6 +253,9 @@ io.on('connection', (socket) => {
       const senderId = String(socket.user.id);
       if (requestedSenderId && String(requestedSenderId) !== senderId) {
         throw new Error('Sender identity does not match socket identity');
+      }
+      if (!await User.exists({ _id: receiverId })) {
+        throw new Error('Recipient account no longer exists');
       }
 
       const conversationId = [senderId, receiverId].sort().join('_');

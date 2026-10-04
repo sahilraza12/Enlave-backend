@@ -13,6 +13,10 @@ const messageSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  senderPublicKey: {
+    type: String,
+    default: null
+  },
   receiver: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'User', 

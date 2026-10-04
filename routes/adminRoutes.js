@@ -35,8 +35,8 @@ router.get('/conversations', verifyAdmin, async (req, res) => {
 
         return {
           _id: conv._id,
-          user1: user1 || { name: 'Unknown User' },
-          user2: user2 || { name: 'Unknown User' },
+          user1: user1 || { _id: user1Id, name: 'Deleted User' },
+          user2: user2 || { _id: user2Id, name: 'Deleted User' },
           lastMessageAt: conv.lastMessageAt,
           totalMessages: conv.totalMessages
         };
@@ -70,6 +70,8 @@ router.get('/conversation/:conversationId', verifyAdmin, async (req, res) => {
 
     const formattedMessages = chronologicalMessages.map((msg) => {
       let plaintext = '';
+      const senderId = msg.populated('sender') || msg.sender;
+      const sender = msg.sender || (senderId ? { _id: senderId, name: 'Deleted User' } : null);
 
       // Agar server-side legacy static tunnel decrypt possible ho
       if (msg.messageType === 'text' && !msg.adminKeyWrap && msg.encryptedText) {
@@ -83,7 +85,7 @@ router.get('/conversation/:conversationId', verifyAdmin, async (req, res) => {
       return {
         _id: msg._id,
         conversationId: msg.conversationId,
-        sender: msg.sender,
+        sender,
         receiver: msg.receiver,
         messageType: msg.messageType,
         fileName: msg.fileData?.fileName || msg.fileName || '',
@@ -96,7 +98,7 @@ router.get('/conversation/:conversationId', verifyAdmin, async (req, res) => {
         recipientKeyWrap: msg.recipientKeyWrap || null,
         auditPayload: msg.auditPayload || null,
         auditIv: msg.auditIv || null,
-        senderPublicKey: msg.sender?.publicKey || null,
+        senderPublicKey: msg.senderPublicKey || msg.sender?.publicKey || null,
         text: plaintext, // Agar empty hoga toh AdminDashboard ka WebCrypto decrypt karega
         isDeleted: msg.isDeleted || false,
         createdAt: msg.createdAt

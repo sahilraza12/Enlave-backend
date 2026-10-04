@@ -4,6 +4,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Message = require('../models/Message');
 const { verifyToken } = require('../middleware/auth');
 
 // Register
@@ -141,7 +142,33 @@ router.get('/users', verifyToken, async (req, res) => {
   try {
     const users = await User.find({ _id: { $ne: req.user.id } })
       .select('-password -privateKey'); // Private key kisa doosre ko kabhi leak na ho
-    res.json(users);
+
+    const [sentToUsers, receivedFromUsers] = await Promise.all([
+      Message.distinct('receiver', { sender: req.user.id }),
+      Message.distinct('sender', { receiver: req.user.id })
+    ]);
+    const activeUserIds = new Set(users.map((user) => String(user._id)));
+    const archivedUserIds = [...new Set([...sentToUsers, ...receivedFromUsers]
+      .map(String)
+      .filter((id) => id !== String(req.user.id) && !activeUserIds.has(id)))];
+    const archivedUsers = await Promise.all(archivedUserIds.map(async (id) => {
+      const lastSentMessage = await Message.findOne({
+        sender: id,
+        receiver: req.user.id,
+        senderPublicKey: { $nin: [null, ''] }
+      }).sort({ createdAt: -1 }).select('senderPublicKey');
+
+      return {
+        _id: id,
+        name: 'Deleted User',
+        email: '',
+        role: 'user',
+        publicKey: lastSentMessage?.senderPublicKey || null,
+        isDeleted: true
+      };
+    }));
+
+    res.json([...users, ...archivedUsers]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const Message = require('../models/Message');
+const User = require('../models/User');
 const { verifyToken } = require('../middleware/auth');
 const { encryptBuffer, decryptBuffer } = require('../utils/cryptoHelper');
 
@@ -35,6 +36,9 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
 
     if (!receiverId) {
       return res.status(400).json({ error: 'Receiver ID is required' });
+    }
+    if (!await User.exists({ _id: receiverId })) {
+      return res.status(404).json({ error: 'Recipient account no longer exists' });
     }
 
     const conversationId = [req.user.id, receiverId].sort().join('_');
@@ -95,6 +99,9 @@ router.post('/upload-audio', verifyToken, upload.single('audio'), async (req, re
 
     if (!receiverId) {
       return res.status(400).json({ error: 'Receiver ID is required' });
+    }
+    if (!await User.exists({ _id: receiverId })) {
+      return res.status(404).json({ error: 'Recipient account no longer exists' });
     }
 
     const senderId = req.user.id;
@@ -163,6 +170,10 @@ router.get('/audio/:messageId', async (req, res) => {
       return res.status(401).json({ error: 'Invalid or Expired Token' });
     }
 
+    if (!await User.exists({ _id: decodedUser.id })) {
+      return res.status(401).json({ error: 'Account no longer exists' });
+    }
+
     const msg = await Message.findById(req.params.messageId);
     if (!msg || !msg.fileData?.filePath) {
       return res.status(404).json({ error: 'Voice recording not found' });
@@ -207,6 +218,10 @@ router.get('/download/:messageId', async (req, res) => {
       decodedUser = jwt.verify(token, process.env.JWT_SECRET);
     } catch (e) {
       return res.status(401).json({ error: 'Invalid or Expired Token' });
+    }
+
+    if (!await User.exists({ _id: decodedUser.id })) {
+      return res.status(401).json({ error: 'Account no longer exists' });
     }
 
     const msg = await Message.findById(req.params.messageId);
