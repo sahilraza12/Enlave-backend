@@ -154,7 +154,8 @@ router.post('/create-user', verifyAdmin, async (req, res) => {
       name,
       email,
       password: hashedPassword,
-      role: role || 'user'
+      role: role || 'user',
+      createdBy: req.user.id
     });
 
     res.status(201).json({

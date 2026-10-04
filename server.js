@@ -54,7 +54,10 @@ app.get('/api/messages/:otherUserId', require('./middleware/auth').verifyToken, 
       { $set: { status: 'seen' } }
     );
 
-    const messages = await Message.find({ conversationId }).sort({ createdAt: 1 });
+    const messages = await Message.find({
+      conversationId,
+      hiddenFor: { $ne: userId }
+    }).sort({ createdAt: 1 });
     
     // Server passes complete cryptographic envelope to browser engines
     const historyPayload = messages.map((msg) => ({
@@ -85,6 +88,51 @@ app.get('/api/messages/:otherUserId', require('./middleware/auth').verifyToken, 
   }
 });
 
+app.delete('/api/messages/:otherUserId', require('./middleware/auth').verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user.id);
+    const otherUserId = req.params.otherUserId;
+    if (!mongoose.Types.ObjectId.isValid(otherUserId) || otherUserId === userId) {
+      return res.status(400).json({ error: 'A valid conversation partner is required' });
+    }
+
+    const [clearingUser, otherUser] = await Promise.all([
+      User.findById(userId).select('name email createdBy'),
+      User.findById(otherUserId).select('name email')
+    ]);
+    if (!clearingUser || !otherUser) {
+      return res.status(404).json({ error: 'Conversation user not found' });
+    }
+
+    const conversationId = [userId, String(otherUserId)].sort().join('_');
+    const result = await Message.updateMany(
+      { conversationId, hiddenFor: { $ne: userId } },
+      { $addToSet: { hiddenFor: userId } }
+    );
+
+    if (result.modifiedCount > 0) {
+      const notification = {
+        clearingUserName: clearingUser.name,
+        clearingUserEmail: clearingUser.email,
+        otherUserName: otherUser.name,
+        otherUserEmail: otherUser.email,
+        conversationId,
+        messageCount: result.modifiedCount,
+        clearedAt: new Date()
+      };
+      const adminRoom = clearingUser.createdBy
+        ? `admin:${clearingUser.createdBy}`
+        : 'admin-monitor';
+      io.to(adminRoom).emit('conversationCleared', notification);
+    }
+
+    res.json({ success: true, messageCount: result.modifiedCount });
+  } catch (err) {
+    console.error('Conversation clear error:', err);
+    res.status(500).json({ error: 'Could not clear this conversation' });
+  }
+});
+
 // Real-time socket session mappings
 const onlineUsers = new Map(); // userId -> socketId
 const activeSessions = new Map(); // socketId -> { userId, sessionRecordId }
@@ -92,7 +140,10 @@ const activeSessions = new Map(); // socketId -> { userId, sessionRecordId }
 io.on('connection', (socket) => {
   // Join global admin audit room
   socket.on('joinAdminMonitor', () => {
-    if (socket.user.role === 'admin') socket.join('admin-monitor');
+    if (socket.user.role === 'admin') {
+      socket.join('admin-monitor');
+      socket.join(`admin:${socket.user.id}`);
+    }
   });
 
   // Track user login and online presence
