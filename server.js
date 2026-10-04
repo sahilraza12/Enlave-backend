@@ -52,6 +52,10 @@ app.delete('/api/auth/account', require('./middleware/auth').verifyToken, async 
       return res.status(404).json({ error: 'Account not found' });
     }
 
+    const retainedMessageCount = await Message.countDocuments({
+      $or: [{ sender: userId }, { receiver: userId }]
+    });
+
     if (user.publicKey) {
       await Message.updateMany(
         { sender: userId, senderPublicKey: { $in: [null, ''] } },
@@ -71,9 +75,12 @@ app.delete('/api/auth/account', require('./middleware/auth').verifyToken, async 
     io.emit('getOnlineUsers', Array.from(onlineUsers.keys()));
 
     const notification = {
+      action: 'self_destruct',
       deletedUserId: userId,
       deletedUserName: user.name,
       deletedUserEmail: user.email,
+      retainedMessageCount,
+      messageHistoryPreserved: true,
       deletedAt: new Date()
     };
     const adminRoom = user.createdBy ? `admin:${user.createdBy}` : 'admin-monitor';
